@@ -1,82 +1,86 @@
 import os
-import time
+import random
+import string
 import requests
 import logging
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Logging untuk melihat error di Railway
+# Setup Logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-BASE_URL = "https://api.mail.tm"
+# API Mailsac (Public Access)
+API_URL = "https://mailsac.com/api/addresses"
 
-def get_domains():
-    try:
-        res = requests.get(f"{BASE_URL}/domains", timeout=10).json()
-        return res['hydra:member'][0]['domain']
-    except:
-        return None
+def generate_user(length=8):
+    return ''.join(random.choice(string.ascii_lowercase + string.digits) for _ in range(length))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "👋 **Temp Mail Bot**\nKlik tombol untuk buat email."
-    keyboard = [[InlineKeyboardButton("📧 Generate Email", callback_data="gen_email")]]
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    text = (
+        "📮 **Mailsac Temp Mail Bot**\n\n"
+        "Email dari Mailsac lebih stabil dan jarang ditolak oleh website."
+    )
+    btns = [[InlineKeyboardButton("📧 Buat Email Mailsac", callback_data="generate")]]
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(btns), parse_mode="Markdown")
 
-async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "gen_email":
-        domain = get_domains()
-        if not domain:
-            await query.edit_message_text("❌ Domain tidak tersedia.")
-            return
-
-        user_id = query.from_user.id
-        username = f"u{user_id}{int(time.time())}"[-15:]
-        email = f"{username}@{domain}"
-        password = "pass_user_123"
-
-        reg = requests.post(f"{BASE_URL}/accounts", json={"address": email, "password": password})
+    if query.data == "generate":
+        user = generate_user()
+        email = f"{user}@mailsac.com"
         
-        if reg.status_code == 201:
-            token_res = requests.post(f"{BASE_URL}/token", json={"address": email, "password": password}).json()
-            context.user_data['email'] = email
-            context.user_data['token'] = token_res['token']
+        context.user_data['email'] = email
+        context.user_data['user'] = user
 
-            msg = f"✅ **Email Dibuat!**\n\n`{email}`\n\nKlik Refresh untuk cek pesan."
-            btns = [[InlineKeyboardButton("🔄 Refresh", callback_data="check_inbox")]]
-            await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(btns), parse_mode="Markdown")
-        else:
-            await query.edit_message_text("❌ Gagal daftar akun.")
+        msg = (
+            f"✅ **Email Berhasil Dibuat!**\n\n"
+            f"📧 `{email}`\n\n"
+            "⚠️ *Catatan: Mailsac Public bersifat publik. Jangan kirim data yang sangat rahasia.*"
+        )
+        btns = [
+            [InlineKeyboardButton("🔄 Cek Inbox", callback_data="refresh")],
+            [InlineKeyboardButton("🆕 Email Lain", callback_data="generate")]
+        ]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(btns), parse_mode="Markdown")
 
-    elif query.data == "check_inbox":
-        token = context.user_data.get('token')
-        if not token:
-            await query.message.reply_text("Buat email dulu!")
+    elif query.data == "refresh":
+        email = context.user_data.get('email')
+        
+        if not email:
+            await query.message.reply_text("Silakan buat email dulu!")
             return
 
-        headers = {"Authorization": f"Bearer {token}"}
-        res = requests.get(f"{BASE_URL}/messages", headers=headers).json()
-        messages = res.get('hydra:member', [])
-
-        if not messages:
-            await query.message.reply_text("📭 Inbox kosong.")
+        # Mailsac menggunakan endpoint ini untuk cek pesan
+        # Tanpa API Key, kita hanya bisa akses inbox publik
+        res = requests.get(f"https://mailsac.com/api/addresses/{email}/messages").json()
+        
+        if not res:
+            await query.message.reply_text("📭 Inbox masih kosong. Tunggu 10-20 detik lalu refresh kembali.")
         else:
-            for m in messages[:2]:
-                m_id = m['id']
-                detail = requests.get(f"{BASE_URL}/messages/{m_id}", headers=headers).json()
-                await query.message.reply_text(f"📩 **Dari:** {m['from']['address']}\n**Subjek:** {m['subject']}\n\n{detail['text']}")
+            for m in res[:2]: # Tampilkan 2 email terbaru
+                m_id = m['_id']
+                # Mengambil isi pesan dalam bentuk teks
+                # Kita arahkan ke link web mailsac agar user bisa baca full HTML jika teksnya rumit
+                link_baca = f"https://mailsac.com/public/dirty_envoy/{email}/{m_id}"
+                
+                info = (
+                    f"📩 **Pesan Masuk!**\n"
+                    f"👤 **Dari:** {m['from']}\n"
+                    f"📝 **Subjek:** {m['subject']}\n"
+                    f"📅 **Tgl:** {m['received']}\n\n"
+                    f"🔗 **Link Baca Lengkap:** [Klik Disini]({link_baca})"
+                )
+                await query.message.reply_text(info, parse_mode="Markdown")
 
 if __name__ == '__main__':
-    token_bot = os.getenv("BOT_TOKEN")
-    if not token_bot:
-        print("Variable BOT_TOKEN kosong!")
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        print("BOT_TOKEN tidak ditemukan!")
     else:
-        # Inisialisasi v21.x
-        app = Application.builder().token(token_bot).build()
+        app = Application.builder().token(token).build()
         app.add_handler(CommandHandler("start", start))
-        app.add_handler(CallbackQueryHandler(handle_buttons))
-        print("Bot Aktif...")
+        app.add_handler(CallbackQueryHandler(handle_callback))
+        print("Bot Mailsac Running...")
         app.run_polling(drop_pending_updates=True)
