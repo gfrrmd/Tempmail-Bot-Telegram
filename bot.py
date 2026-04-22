@@ -79,11 +79,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         isi = detail.get('text') or "Isi pesan kosong atau hanya format HTML."
         
         full_text = (
-            f"📧 **Detail Email**\n"
+            f"📧 Detail Email\n"
             f"━━━━━━━━━━━━━━━\n"
-            f"👤 **Dari:** {detail['from']['address']}\n"
-            f"📝 **Subjek:** {detail['subject']}\n\n"
-            f"📄 **Isi:**\n{isi[:3800]}"
+            f"👤 Dari: {detail['from']['address']}\n"
+            f"📝 Subjek: {detail['subject']}\n\n"
+            f"📄 Isi:\n{isi[:3800]}"
         )
         
         # Tombol kembali ke list
